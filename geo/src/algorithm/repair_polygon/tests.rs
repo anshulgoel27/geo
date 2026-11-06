@@ -892,3 +892,24 @@ fn sweep_splits_segment_at_t_junction() {
         ]
     );
 }
+
+#[test]
+fn near_t_junction_after_rounding() {
+    // In grid units this is POLYGON((3 4,1 0,1 7,3 3,2 2,3 4)): (2 2) lies on
+    // the edge (3 4)-(1 0), and the closing edge overlaps it, so the overlap
+    // cancels. Scaled to metres in degrees and offset to Washington, DC,
+    // rounding moves (2 2) a few ulps off that edge, and the sweep reports
+    // neither a T-junction nor an overlap. GEOS gives 6.5 grid cells.
+    let poly: Polygon<f64> = wkt!(POLYGON((
+        -77.0299775 - 77.02997,
+        -77.0299925 - 77.03,
+        -77.0299925 - 77.0299475,
+        -77.0299775 - 77.0299775,
+        -77.029985 - 77.029985,
+        -77.0299775 - 77.02997
+    )));
+    let cell = (6e-5f64 / 8.0).powi(2);
+    let repaired = poly.make_valid().unwrap();
+    assert_valid(&repaired);
+    assert_relative_eq!(total_area(&repaired) / cell, 6.5, max_relative = 1e-6);
+}

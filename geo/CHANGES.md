@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- FIX: `MakeValid::make_valid` returned the wrong area for rings where a vertex lies in the interior of another edge (a T-junction), such as `POLYGON((7 1,4 4,5 6,5 3,8 5,4 2,7 1))`. The edge was not split at the vertex, so the edges meeting there were dropped from the triangulation and the inside/outside labelling leaked across them. Segments are now split at T-junctions as well as at crossings, which also applies to constrained Delaunay triangulations.
 - FIX: `MakeValid::make_valid` now returns rings and polygons in a deterministic order; previously the start vertex of each ring and the order of polygons could vary between runs.
   - <https://github.com/georust/geo/issues/1629>
 - BREAKING: `GeoNum` (and therefore `GeoFloat`) now requires `Send + Sync`. This lets algorithms behind the `multithreading` feature share coordinates across threads without per-algorithm bounds. All supported primitive scalar types already satisfy the bound; only downstream `GeoNum` implementations on non-thread-safe types are affected.

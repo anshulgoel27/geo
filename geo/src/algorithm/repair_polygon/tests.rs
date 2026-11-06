@@ -744,3 +744,48 @@ fn output_is_deterministic() {
         assert_eq!(bowtie.make_valid().unwrap(), expected);
     }
 }
+
+// ====== T-junctions: a vertex in the interior of another edge ======
+// The edge has to be split at the vertex. Otherwise the edges that meet at
+// the vertex look like they cross it, their constraints are dropped, and the
+// flood fill leaks across the missing boundary.
+
+#[test]
+fn t_junction_self_intersection() {
+    // (5, 3) lies on the edge (7, 1)-(4, 4). Even-odd area from GEOS: 26/7.
+    let poly: Polygon<f64> = wkt!(POLYGON((7. 1., 4. 4., 5. 6., 5. 3., 8. 5., 4. 2., 7. 1.)));
+    let repaired = poly.make_valid().unwrap();
+    assert_valid(&repaired);
+    assert_relative_eq!(total_area(&repaired), 26.0 / 7.0, max_relative = 1e-12);
+}
+
+#[test]
+fn hole_touching_shell_edge_keeps_area() {
+    // The hole's vertex (5, 0) lies in the interior of the shell's bottom edge.
+    let poly: Polygon<f64> = wkt!(POLYGON(
+        (0. 0., 10. 0., 10. 10., 0. 10., 0. 0.),
+        (5. 0., 8. 3., 2. 3., 5. 0.)
+    ));
+    let repaired = poly.make_valid().unwrap();
+    assert_valid(&repaired);
+    assert_relative_eq!(total_area(&repaired), 91.0);
+}
+
+#[test]
+fn sweep_splits_segment_at_t_junction() {
+    // (5, 0) is an endpoint of the second line and inside the first.
+    let lines = vec![
+        Line::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 10.0, y: 0.0 }),
+        Line::new(Coord { x: 5.0, y: 0.0 }, Coord { x: 5.0, y: 5.0 }),
+    ];
+    let mut result = prepare_lines_for_repair(lines);
+    result.sort_by(sweep_line_ord);
+    assert_eq!(
+        result,
+        vec![
+            Line::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 5.0, y: 0.0 }),
+            Line::new(Coord { x: 5.0, y: 0.0 }, Coord { x: 5.0, y: 5.0 }),
+            Line::new(Coord { x: 5.0, y: 0.0 }, Coord { x: 10.0, y: 0.0 }),
+        ]
+    );
+}

@@ -486,9 +486,9 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
         .collect();
 
     // Collect intersections lazily: defer the per-segment split-point
-    // storage until the first proper intersection is found.  For the
+    // storage until the first segment that needs splitting is found.  For the
     // common case (valid polygon edges that share only endpoints after
-    // snapping), the sweep finds no proper intersections and we skip
+    // snapping), the sweep finds nothing to split and we skip
     // Phase 2 and 3 entirely -- returning the input unchanged without
     // allocating or iterating over n segments.
     let mut split_points: Option<Vec<Vec<Coord<T>>>> = None;
@@ -498,11 +498,23 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
                 intersection: pt,
                 is_proper,
             } => {
-                if is_proper {
+                // A proper crossing splits both segments. An improper one
+                // splits each segment it lies inside: at a T-junction, an
+                // endpoint of one segment touches the interior of the other,
+                // which must be split there too, or the two would look like
+                // they cross once triangulated. Segments that only share an
+                // endpoint are left alone.
+                let inside = |l: &Line<T>| is_proper || (pt != l.start && pt != l.end);
+                let (split_a, split_b) = (inside(&seg_a.line), inside(&seg_b.line));
+                if split_a || split_b {
                     let sp = split_points.get_or_insert_with(|| vec![Vec::new(); lines.len()]);
                     let pt = snap_or_register_point(pt, &mut known_points, snap_radius);
-                    sp[seg_a.index].push(pt);
-                    sp[seg_b.index].push(pt);
+                    if split_a {
+                        sp[seg_a.index].push(pt);
+                    }
+                    if split_b {
+                        sp[seg_b.index].push(pt);
+                    }
                 }
             }
             LineIntersection::Collinear {

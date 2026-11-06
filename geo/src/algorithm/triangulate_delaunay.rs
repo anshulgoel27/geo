@@ -486,9 +486,9 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
         .collect();
 
     // Collect intersections lazily: defer the per-segment split-point
-    // storage until the first proper intersection is found.  For the
+    // storage until the first segment that needs splitting is found.  For the
     // common case (valid polygon edges that share only endpoints after
-    // snapping), the sweep finds no proper intersections and we skip
+    // snapping), the sweep finds nothing to split and we skip
     // Phase 2 and 3 entirely -- returning the input unchanged without
     // allocating or iterating over n segments.
     let mut split_points: Option<Vec<Vec<Coord<T>>>> = None;
@@ -498,6 +498,8 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
                 intersection: pt,
                 is_proper,
             } => {
+                // Improper intersections (an endpoint touching the other
+                // segment) are handled by the vertex pass below.
                 if is_proper {
                     let sp = split_points.get_or_insert_with(|| vec![Vec::new(); lines.len()]);
                     let pt = snap_or_register_point(pt, &mut known_points, snap_radius);
@@ -521,9 +523,36 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
         }
     }
 
-    // Fast path: no proper intersections found.  The input segments
-    // already share only endpoints (the common case after preprocess_lines
-    // has snapped and deduped), so return them unchanged.
+    // Vertex pass: split each segment at every known point (input vertex or
+    // intersection found above) that lies in its interior or within
+    // `snap_radius` of it.  This covers T-junctions, where an endpoint of one
+    // segment touches the interior of another: the sweep reports those as
+    // improper intersections.  It also covers points that rounding left a
+    // few ulps off a segment, which the sweep does not report at all.  Left
+    // unsplit, the segments meeting at such a point look like they cross the
+    // other segment once triangulated, and their constraints are dropped.
+    for (i, line) in lines.iter().enumerate() {
+        let lower = Coord {
+            x: line.start.x.min(line.end.x) - snap_radius,
+            y: line.start.y.min(line.end.y) - snap_radius,
+        };
+        let upper = Coord {
+            x: line.start.x.max(line.end.x) + snap_radius,
+            y: line.start.y.max(line.end.y) + snap_radius,
+        };
+        let envelope = rstar::AABB::from_corners(lower, upper);
+        for p in known_points.locate_in_envelope(envelope) {
+            if *p == line.start || *p == line.end || !near_segment(*p, line, snap_radius) {
+                continue;
+            }
+            let sp = split_points.get_or_insert_with(|| vec![Vec::new(); lines.len()]);
+            sp[i].push(*p);
+        }
+    }
+
+    // Fast path: nothing to split.  The input segments already share only
+    // endpoints (the common case after preprocess_lines has snapped and
+    // deduped), so return them unchanged.
     let Some(mut split_points) = split_points else {
         return Ok(lines);
     };
@@ -574,6 +603,16 @@ pub(crate) fn split_segments_at_intersections<T: SpadeTriangulationFloat>(
     result.retain(|l| l.start != l.end);
 
     Ok(result)
+}
+
+/// Whether `p` lies on `line`, exactly or within `snap_radius` of it.
+fn near_segment<T: GeoFloat>(p: Coord<T>, line: &Line<T>, snap_radius: T) -> bool {
+    use crate::kernels::{Kernel, Orientation};
+    let in_box = |v: T, a: T, b: T| a.min(b) <= v && v <= a.max(b);
+    let exactly_on = T::Ker::orient2d(line.start, line.end, p) == Orientation::Collinear
+        && in_box(p.x, line.start.x, line.end.x)
+        && in_box(p.y, line.start.y, line.end.y);
+    exactly_on || Euclidean.distance(&Point::from(p), line) < snap_radius
 }
 
 /// A line segment tagged with its original index, for the sweep iterator.
